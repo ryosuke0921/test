@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
-
-from flask import Flask, jsonify, render_template, request
-
-app = Flask(__name__)
 
 
 @dataclass
@@ -185,35 +185,110 @@ def optimize_slitting(
     return state.optimize()
 
 
-@app.route("/")
-def index() -> str:
-    return render_template("index.html")
+class SlittingRequestHandler(BaseHTTPRequestHandler):
+    server_version = "SlittingOptimizer/1.0"
+
+    base_dir = Path(__file__).resolve().parent
+    template_dir = base_dir / "templates"
+    static_dir = base_dir / "static"
+
+    def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if self.path == "/" or self.path == "/index.html":
+            self._serve_file(self.template_dir / "index.html", content_type="text/html; charset=utf-8")
+            return
+        if self.path.startswith("/static/"):
+            relative = Path(self.path[len("/static/") :])
+            requested = (self.static_dir / relative).resolve()
+            try:
+                requested.relative_to(self.static_dir)
+            except ValueError:
+                self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+                return
+            self._serve_file(requested)
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+
+    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+        if self.path != "/optimize":
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+            return
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length).decode("utf-8") if length > 0 else ""
+        try:
+            payload = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._json_response({"success": False, "message": "JSONの形式が正しくありません。"}, HTTPStatus.BAD_REQUEST)
+            return
+
+        try:
+            base_width = float(payload.get("baseWidth", 0))
+            max_length = float(payload.get("maxLength", 0))
+            widths = [float(item) for item in payload.get("widths", [])]
+            instructions = [float(item) for item in payload.get("instructions", [])]
+            result = optimize_slitting(base_width, max_length, widths, instructions)
+            response = {
+                "rolls": result.rolls,
+                "zLength": result.z_length,
+                "widthUsage": result.total_width_usage,
+                "slack": result.slack,
+                "totalRolls": result.total_rolls,
+                "produced": result.produced_lengths,
+                "differences": result.differences,
+            }
+            self._json_response({"success": True, "result": response})
+        except OptimizationError as exc:
+            self._json_response({"success": False, "message": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except Exception:
+            self._json_response({"success": False, "message": "予期しないエラーが発生しました。"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _serve_file(self, path: Path, *, content_type: Optional[str] = None) -> None:
+        if not path.exists() or not path.is_file():
+            self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
+            return
+        if content_type is None:
+            content_type = self._guess_type(path)
+        try:
+            data = path.read_bytes()
+        except OSError:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "ファイルを読み込めませんでした。")
+            return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _json_response(self, payload: Dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _guess_type(self, path: Path) -> str:
+        if path.suffix == ".js":
+            return "application/javascript; charset=utf-8"
+        if path.suffix == ".css":
+            return "text/css; charset=utf-8"
+        if path.suffix == ".json":
+            return "application/json; charset=utf-8"
+        if path.suffix == ".html":
+            return "text/html; charset=utf-8"
+        return "application/octet-stream"
 
 
-@app.route("/optimize", methods=["POST"])
-def optimize_endpoint():
-    data: Dict[str, object] = request.get_json(force=True)
+def run_server(host: str = "127.0.0.1", port: int = 8000) -> None:
+    server = ThreadingHTTPServer((host, port), SlittingRequestHandler)
+    print(f"Serving on http://{host}:{port}")
     try:
-        base_width = float(data.get("baseWidth", 0))
-        max_length = float(data.get("maxLength", 0))
-        widths = [float(item) for item in data.get("widths", [])]
-        instructions = [float(item) for item in data.get("instructions", [])]
-        result = optimize_slitting(base_width, max_length, widths, instructions)
-        response = {
-            "rolls": result.rolls,
-            "zLength": result.z_length,
-            "widthUsage": result.total_width_usage,
-            "slack": result.slack,
-            "totalRolls": result.total_rolls,
-            "produced": result.produced_lengths,
-            "differences": result.differences,
-        }
-        return jsonify({"success": True, "result": response})
-    except OptimizationError as exc:
-        return jsonify({"success": False, "message": str(exc)}), 400
-    except Exception:
-        return jsonify({"success": False, "message": "予期しないエラーが発生しました。"}), 500
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nServer stopped.")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    run_server()

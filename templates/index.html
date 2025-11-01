@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>スリット共取り最適化</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <main class="container">
+      <h1>ロール材スリット共取り最適化</h1>
+      <section class="card">
+        <h2>入力条件</h2>
+        <form id="optimization-form">
+          <div class="field-group">
+            <label for="base-width">原反幅 U (mm)</label>
+            <input id="base-width" name="baseWidth" type="number" step="0.1" min="0" required />
+          </div>
+          <div class="field-group">
+            <label for="max-length">原反巻き数 L (m)</label>
+            <input id="max-length" name="maxLength" type="number" step="0.1" min="0" required />
+          </div>
+          <div class="field-group">
+            <label>スリット幅・指示数</label>
+            <div id="slit-rows"></div>
+            <button type="button" id="add-row" class="secondary">＋ スリットを追加</button>
+          </div>
+          <button type="submit" class="primary">最適化を実行</button>
+        </form>
+      </section>
+
+      <section class="card" id="result-section" hidden>
+        <h2>出力結果</h2>
+        <div id="result-summary"></div>
+        <table id="result-table">
+          <thead>
+            <tr>
+              <th>スリット</th>
+              <th>幅 (mm)</th>
+              <th>ロール数 Y</th>
+              <th>生産量 Z×Y (m)</th>
+              <th>指示数 X (m)</th>
+              <th>差分 |Z×Y - X| (m)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section class="card error" id="error-section" hidden>
+        <h2>エラー</h2>
+        <p id="error-message"></p>
+      </section>
+    </main>
+
+    <template id="slit-row-template">
+      <div class="slit-row">
+        <div class="field-group">
+          <label>スリット幅 (mm)</label>
+          <input type="number" class="slit-width" step="0.1" min="0" required />
+        </div>
+        <div class="field-group">
+          <label>スリット指示数 X (m)</label>
+          <input type="number" class="slit-instruction" step="0.1" min="0" required />
+        </div>
+        <button type="button" class="icon-button remove">✕</button>
+      </div>
+    </template>
+
+    <script src="{{ url_for('static', filename='main.js') }}" defer></script>
+  </body>
+</html>
